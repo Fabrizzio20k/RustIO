@@ -26,3 +26,12 @@ target
 /target
 
 .env
+# fastembed model cache
+.fastembed_cache/
+
+# almacén de contexto local
+context.db
+context.db-*
+
+# workspace de proyectos Python generados por el agente
+workspace/
