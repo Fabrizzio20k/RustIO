@@ -35,3 +35,5 @@ context.db-*
 
 # workspace de proyectos Python generados por el agente
 workspace/
+
+models/

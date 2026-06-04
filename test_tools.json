@@ -1,0 +1,24 @@
+{
+  "model": "qwen",
+  "messages": [
+    { "role": "system", "content": "Eres un agente que escribe archivos en un workspace usando las tools disponibles." },
+    { "role": "user", "content": "Crea un archivo hola.py que imprima 'hola mundo'." }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "Escribe contenido en un archivo del workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string" },
+            "content": { "type": "string" }
+          },
+          "required": ["path", "content"]
+        }
+      }
+    }
+  ]
+}

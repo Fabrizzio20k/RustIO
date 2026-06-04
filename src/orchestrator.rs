@@ -1,13 +1,9 @@
 use anyhow::{Context, Result};
 use rig::agent::Agent;
-use rig::completion::{Completion, Prompt};
-use rig::message::{AssistantContent, Message, ToolResultContent, UserContent};
-use rig::OneOrMany;
+use rig::completion::{Prompt, TypedPrompt};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::time::Duration;
-use tokio::time::sleep;
 
 use crate::agents::{Plan, Role, SubTask};
 use crate::context::{ContextStore, Memory};
@@ -19,9 +15,7 @@ use crate::tools::{
 
 const CONTEXT_K: usize = 3;
 const CONTEXT_CHARS: usize = 600;
-const MAX_ATTEMPTS: usize = 4;
 const MAX_TURNS: usize = 12;
-const RATE_LIMIT_BACKOFF: u64 = 12;
 
 pub struct Orchestrator {
     factory: LlmFactory,
@@ -50,11 +44,11 @@ impl Orchestrator {
 
         let planner = self
             .factory
-            .extractor::<Plan>()
+            .agent()
             .preamble(self.prompts.planner.as_str())
             .build();
-        let plan = planner
-            .extract(task)
+        let plan: Plan = planner
+            .prompt_typed::<Plan>(task)
             .await
             .context("el planner no pudo generar un plan válido")?;
 
@@ -110,50 +104,12 @@ impl Orchestrator {
 
     async fn run_subtask(&self, role: Role, prompt: &str) -> Result<String> {
         let agent = self.build_worker(role);
-        let mut history: Vec<Message> = Vec::new();
-        let mut pending = Message::user(prompt);
-
-        for _ in 0..MAX_TURNS {
-            let choice = complete(&agent, &pending, &history).await?;
-
-            let mut tool_calls = Vec::new();
-            let mut texts = Vec::new();
-            for content in choice.iter() {
-                match content {
-                    AssistantContent::Text(text) => texts.push(text.text.clone()),
-                    AssistantContent::ToolCall(call) => tool_calls.push(call.clone()),
-                }
-            }
-
-            if tool_calls.is_empty() {
-                return Ok(texts.join("\n"));
-            }
-
-            history.push(pending);
-            history.push(Message::Assistant {
-                content: choice.clone(),
-            });
-
-            let mut results = Vec::new();
-            for call in &tool_calls {
-                let output = agent
-                    .tools
-                    .call(&call.function.name, call.function.arguments.to_string())
-                    .await
-                    .unwrap_or_else(|error| format!("ERROR: {error}"));
-                println!("    · {} -> {}", call.function.name, first_line(&output));
-                results.push(UserContent::tool_result(
-                    call.id.clone(),
-                    OneOrMany::one(ToolResultContent::text(output)),
-                ));
-            }
-
-            pending = Message::User {
-                content: OneOrMany::many(results).expect("hay al menos un resultado de tool"),
-            };
-        }
-
-        anyhow::bail!("el agente no terminó en {MAX_TURNS} turnos")
+        let answer = agent
+            .prompt(prompt)
+            .max_turns(MAX_TURNS)
+            .await
+            .context("el agente no completó la subtarea")?;
+        Ok(answer)
     }
 
     fn build_worker(&self, role: Role) -> Agent<Model> {
@@ -201,45 +157,6 @@ fn build_prompt(task: &str, st: &SubTask, memories: &[Memory]) -> String {
         title = st.title,
         desc = st.description,
     )
-}
-
-async fn complete(
-    agent: &Agent<Model>,
-    pending: &Message,
-    history: &[Message],
-) -> Result<OneOrMany<AssistantContent>> {
-    let mut last_error = String::new();
-    for attempt in 1..=MAX_ATTEMPTS {
-        let sent = match agent.completion(pending.clone(), history.to_vec()).await {
-            Ok(builder) => builder.send().await,
-            Err(error) => Err(error),
-        };
-        match sent {
-            Ok(response) => return Ok(response.choice),
-            Err(error) => {
-                last_error = error.to_string();
-                eprintln!("  reintento {attempt}/{MAX_ATTEMPTS} (modelo): {last_error}");
-                if attempt < MAX_ATTEMPTS {
-                    let backoff = if is_rate_limit(&last_error) {
-                        RATE_LIMIT_BACKOFF
-                    } else {
-                        1
-                    };
-                    sleep(Duration::from_secs(backoff)).await;
-                }
-            }
-        }
-    }
-    anyhow::bail!("fallo del modelo tras {MAX_ATTEMPTS} intentos: {last_error}")
-}
-
-fn first_line(text: &str) -> String {
-    let line = text.lines().next().unwrap_or("").trim();
-    truncate(line, 120)
-}
-
-fn is_rate_limit(error: &str) -> bool {
-    error.contains("rate_limit") || error.contains("Rate limit")
 }
 
 fn short_id(task: &str) -> String {
