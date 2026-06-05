@@ -10,7 +10,8 @@ use crate::context::{ContextStore, Memory};
 use crate::llm::{LlmFactory, Model};
 use crate::prompts::Prompts;
 use crate::tools::{
-    ConsultReference, InstallPackages, ListFiles, ReadFile, RunPython, SetupVenv, WriteFile,
+    ConsultReference, Dht11Reference, InstallPackages, ListFiles, Mq135Reference, ReadFile,
+    RunPython, SetupVenv, WriteFile,
 };
 
 const CONTEXT_K: usize = 3;
@@ -73,7 +74,7 @@ impl Orchestrator {
                     results.push(format!("## [{}] {}\n{answer}", st.id, st.title));
                 }
                 Err(error) => {
-                    eprintln!("subtarea {} no completada: {error}", st.id);
+                    eprintln!("subtarea {} no completada: {error:#}", st.id);
                     let note = format!("La subtarea no se completó: {error}");
                     self.ctx.add(&task_id, st.role.as_str(), &note)?;
                     results.push(format!(
@@ -129,6 +130,8 @@ impl Orchestrator {
                 .tool(ListFiles::new(ws.clone()))
                 .tool(RunPython::new(ws))
                 .tool(ConsultReference::new(self.prompts.reference.clone()))
+                .tool(Dht11Reference::new(self.prompts.dht11.clone()))
+                .tool(Mq135Reference::new(self.prompts.mq135.clone()))
                 .build(),
             Role::Reviewer => builder
                 .tool(ReadFile::new(ws.clone()))

@@ -8,6 +8,8 @@ pub struct Prompts {
     pub planner: String,
     pub synthesizer: String,
     pub reference: String,
+    pub dht11: String,
+    pub mq135: String,
     coder: String,
     reviewer: String,
 }
@@ -24,6 +26,8 @@ impl Prompts {
             planner: read("planner.md")?,
             synthesizer: read("synthesizer.md")?,
             reference: read("reference.md")?,
+            dht11: read("dht11.md")?,
+            mq135: read("mq135.md")?,
             coder: read("coder.md")?,
             reviewer: read("reviewer.md")?,
         })

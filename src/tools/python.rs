@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{run_command, ToolError};
+use super::{ToolError, run_command};
 
 pub struct SetupVenv {
     root: PathBuf,
@@ -26,12 +26,21 @@ impl Tool for SetupVenv {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Crea el entorno virtual .venv en el workspace con `uv venv`.".to_string(),
+            description: "Crea el entorno virtual .venv en el workspace con `uv venv`. \
+                          Si el .venv ya existe, no hace nada (es idempotente)."
+                .to_string(),
             parameters: json!({ "type": "object", "properties": {} }),
         }
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let venv = self.root.join(".venv");
+        if venv.exists() {
+            return Ok(format!(
+                "El entorno virtual ya existe en {}; no se vuelve a crear.",
+                venv.display()
+            ));
+        }
         run_command(&self.root, "uv", &["venv".to_string()])
     }
 }
@@ -48,6 +57,7 @@ impl InstallPackages {
 
 #[derive(Deserialize)]
 pub struct InstallArgs {
+    #[serde(deserialize_with = "super::de_string_or_seq")]
     pub packages: Vec<String>,
 }
 
@@ -60,8 +70,7 @@ impl Tool for InstallPackages {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Instala paquetes de Python en el .venv con `uv pip install`."
-                .to_string(),
+            description: "Instala paquetes de Python en el .venv con `uv pip install`.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -96,7 +105,7 @@ impl RunPython {
 #[derive(Deserialize)]
 pub struct RunArgs {
     pub file: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::de_string_or_seq")]
     pub args: Vec<String>,
 }
 
@@ -127,9 +136,17 @@ impl Tool for RunPython {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let python = self.root.join(".venv/bin/python");
+        let python = venv_python(&self.root);
         let mut cmd = vec![args.file];
         cmd.extend(args.args);
         run_command(&self.root, python, &cmd)
+    }
+}
+
+fn venv_python(root: &std::path::Path) -> PathBuf {
+    if cfg!(windows) {
+        root.join(".venv").join("Scripts").join("python.exe")
+    } else {
+        root.join(".venv").join("bin").join("python")
     }
 }
