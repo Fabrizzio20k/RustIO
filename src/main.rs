@@ -66,11 +66,17 @@ fn handle_event(app: &mut App, event: Event, llm: &Arc<Llm>, tx: &UnboundedSende
             app.should_quit = true;
         }
         KeyCode::Enter => {
-            if let Some((history, prompt)) = app.submit() {
-                let future = llm.run(history, prompt, tx.clone());
+            if let Some(turn) = app.submit() {
+                let future = llm.run_turn(turn, tx.clone());
                 tokio::spawn(future);
             }
         }
+        KeyCode::Up => app.scroll_up(1),
+        KeyCode::Down => app.scroll_down(1),
+        KeyCode::PageUp => app.scroll_up(10),
+        KeyCode::PageDown => app.scroll_down(10),
+        KeyCode::Home => app.scroll_to_top(),
+        KeyCode::End => app.scroll_to_bottom(),
         KeyCode::Backspace => {
             app.input.pop();
         }

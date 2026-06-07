@@ -1,6 +1,6 @@
 use crate::core::config::Config;
 use crate::core::llm::Token;
-use rig::completion::Message;
+use crate::core::memory::{self, Turn};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -27,7 +27,11 @@ pub struct App {
     pub input: String,
     pub status: Status,
     pub spinner: usize,
+    pub scroll: usize,
     pub should_quit: bool,
+    summary: Option<String>,
+    summarized_upto: usize,
+    budget: usize,
 }
 
 impl App {
@@ -39,7 +43,11 @@ impl App {
             input: String::new(),
             status: Status::Idle,
             spinner: 0,
+            scroll: 0,
             should_quit: false,
+            summary: None,
+            summarized_upto: 0,
+            budget: config.history_budget_tokens,
         }
     }
 
@@ -47,17 +55,23 @@ impl App {
         self.status != Status::Idle
     }
 
-    pub fn history(&self) -> Vec<Message> {
-        self.messages
-            .iter()
-            .map(|m| match m.role {
-                Role::User => Message::user(m.content.clone()),
-                Role::Assistant => Message::assistant(m.content.clone()),
-            })
-            .collect()
+    pub fn scroll_up(&mut self, amount: usize) {
+        self.scroll = self.scroll.saturating_add(amount);
     }
 
-    pub fn submit(&mut self) -> Option<(Vec<Message>, String)> {
+    pub fn scroll_down(&mut self, amount: usize) {
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll = 0;
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.scroll = usize::MAX / 2;
+    }
+
+    pub fn submit(&mut self) -> Option<Turn> {
         if self.is_busy() {
             return None;
         }
@@ -65,18 +79,31 @@ impl App {
         if prompt.is_empty() {
             return None;
         }
-        let history = self.history();
         self.input.clear();
+
+        let prior = &self.messages[self.summarized_upto..];
+        let (overflow, recent) = memory::plan(prior, self.summary.as_deref(), self.budget);
+        let new_upto = self.summarized_upto + overflow.len();
+
+        let turn = Turn {
+            summary: self.summary.clone(),
+            overflow,
+            recent,
+            prompt: prompt.clone(),
+            new_upto,
+        };
+
         self.messages.push(ChatMessage {
             role: Role::User,
-            content: prompt.clone(),
+            content: prompt,
         });
         self.messages.push(ChatMessage {
             role: Role::Assistant,
             content: String::new(),
         });
         self.status = Status::Thinking;
-        Some((history, prompt))
+        self.scroll = 0;
+        Some(turn)
     }
 
     pub fn on_token(&mut self, token: Token) {
@@ -86,6 +113,10 @@ impl App {
                 if let Some(last) = self.messages.last_mut() {
                     last.content.push_str(&delta);
                 }
+            }
+            Token::Summary { text, upto } => {
+                self.summary = Some(text);
+                self.summarized_upto = upto;
             }
             Token::Done => {
                 self.status = Status::Idle;

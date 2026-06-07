@@ -29,6 +29,8 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     ]);
 
     let hints = Line::from(vec![
+        Span::styled("↑↓", Style::default().fg(MUTED).bg(BAR_BG)),
+        Span::styled(" scroll   ", Style::default().fg(FAINT).bg(BAR_BG)),
         Span::styled("enter", Style::default().fg(MUTED).bg(BAR_BG)),
         Span::styled(" enviar   ", Style::default().fg(FAINT).bg(BAR_BG)),
         Span::styled("esc", Style::default().fg(MUTED).bg(BAR_BG)),

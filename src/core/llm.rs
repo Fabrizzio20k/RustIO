@@ -1,10 +1,11 @@
 use crate::core::config::{Config, Provider};
+use crate::core::memory::{self, Turn};
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use rig::agent::{Agent, MultiTurnStreamItem};
 use rig::client::BearerAuth;
-use rig::completion::{CompletionModel, GetTokenUsage, Message};
+use rig::completion::{CompletionModel, GetTokenUsage, Message, Prompt};
 use rig::prelude::{CompletionClient, ProviderClient};
 use rig::providers::{groq, openai};
 use rig::streaming::{StreamedAssistantContent, StreamingChat};
@@ -13,12 +14,14 @@ use tokio::sync::mpsc::UnboundedSender;
 
 pub enum Token {
     Delta(String),
+    Summary { text: String, upto: usize },
     Done,
     Error(String),
 }
 
-trait Chat: Send + Sync {
-    fn run(
+trait Backend: Send + Sync {
+    fn complete(&self, prompt: String) -> BoxFuture<'static, Result<String, String>>;
+    fn stream(
         &self,
         history: Vec<Message>,
         prompt: String,
@@ -26,14 +29,19 @@ trait Chat: Send + Sync {
     ) -> BoxFuture<'static, ()>;
 }
 
-struct AgentChat<M: CompletionModel>(Arc<Agent<M>>);
+struct AgentBackend<M: CompletionModel>(Arc<Agent<M>>);
 
-impl<M> Chat for AgentChat<M>
+impl<M> Backend for AgentBackend<M>
 where
     M: CompletionModel + 'static,
     M::StreamingResponse: GetTokenUsage,
 {
-    fn run(
+    fn complete(&self, prompt: String) -> BoxFuture<'static, Result<String, String>> {
+        let agent = self.0.clone();
+        Box::pin(async move { agent.prompt(prompt).await.map_err(|e| e.to_string()) })
+    }
+
+    fn stream(
         &self,
         history: Vec<Message>,
         prompt: String,
@@ -62,12 +70,12 @@ where
 }
 
 pub struct Llm {
-    inner: Box<dyn Chat>,
+    inner: Arc<dyn Backend>,
 }
 
 impl Llm {
     pub fn new(config: &Config) -> Result<Self> {
-        let inner: Box<dyn Chat> = match config.provider {
+        let inner: Arc<dyn Backend> = match config.provider {
             Provider::Local => {
                 let key = config.api_key.clone().unwrap_or_else(|| "local".into());
                 let client = openai::CompletionsClient::builder()
@@ -79,7 +87,7 @@ impl Llm {
                     .agent(&config.model)
                     .preamble(&config.system_prompt)
                     .build();
-                Box::new(AgentChat(Arc::new(agent)))
+                Arc::new(AgentBackend(Arc::new(agent)))
             }
             Provider::Groq => {
                 let client = groq::Client::from_env()
@@ -88,19 +96,41 @@ impl Llm {
                     .agent(&config.model)
                     .preamble(&config.system_prompt)
                     .build();
-                Box::new(AgentChat(Arc::new(agent)))
+                Arc::new(AgentBackend(Arc::new(agent)))
             }
         };
 
         Ok(Self { inner })
     }
 
-    pub fn run(
-        &self,
-        history: Vec<Message>,
-        prompt: String,
-        tx: UnboundedSender<Token>,
-    ) -> BoxFuture<'static, ()> {
-        self.inner.run(history, prompt, tx)
+    pub fn run_turn(&self, turn: Turn, tx: UnboundedSender<Token>) -> BoxFuture<'static, ()> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let overflow = turn.overflow;
+            let mut recent = turn.recent;
+            let mut summary = turn.summary;
+
+            if !overflow.is_empty() {
+                let prompt = memory::summarize_prompt(summary.as_deref(), &overflow);
+                match inner.complete(prompt).await {
+                    Ok(text) => {
+                        let text = text.trim().to_string();
+                        summary = Some(text.clone());
+                        let _ = tx.send(Token::Summary {
+                            text,
+                            upto: turn.new_upto,
+                        });
+                    }
+                    Err(_) => {
+                        let mut merged = overflow;
+                        merged.extend(recent);
+                        recent = merged;
+                    }
+                }
+            }
+
+            let history = memory::build_history(summary.as_deref(), &recent);
+            inner.stream(history, turn.prompt, tx).await;
+        })
     }
 }

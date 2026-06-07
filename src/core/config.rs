@@ -23,6 +23,7 @@ pub struct Config {
     pub base_url: String,
     pub api_key: Option<String>,
     pub system_prompt: String,
+    pub history_budget_tokens: usize,
 }
 
 impl Config {
@@ -42,7 +43,12 @@ impl Config {
             env::var("LOCAL_BASE_URL").unwrap_or_else(|_| "http://localhost:8080/v1".into());
         let api_key = env::var("GROQ_API_KEY").ok();
 
-        let system_prompt = "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Responde de forma clara, concisa y en espanol.".into();
+        let history_budget_tokens = env::var("HISTORY_BUDGET_TOKENS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3000);
+
+        let system_prompt = "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Responde de forma clara, concisa y en espanol y sin emojis.".into();
 
         Ok(Self {
             provider,
@@ -50,6 +56,7 @@ impl Config {
             base_url,
             api_key,
             system_prompt,
+            history_budget_tokens,
         })
     }
 }

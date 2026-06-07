@@ -8,7 +8,7 @@ use crate::core::state::App;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let input_height = input::height(app, frame.area().width);
     let areas = Layout::vertical([
         Constraint::Length(1),
