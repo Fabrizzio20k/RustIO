@@ -12,6 +12,7 @@ pub struct Prompts {
     pub mq135: String,
     coder: String,
     reviewer: String,
+    fixer: String,
 }
 
 impl Prompts {
@@ -30,6 +31,7 @@ impl Prompts {
             mq135: read("mq135.md")?,
             coder: read("coder.md")?,
             reviewer: read("reviewer.md")?,
+            fixer: read("fixer.md")?,
         })
     }
 
@@ -37,6 +39,7 @@ impl Prompts {
         match role {
             Role::Coder => &self.coder,
             Role::Reviewer => &self.reviewer,
+            Role::Fixer => &self.fixer,
         }
     }
 }

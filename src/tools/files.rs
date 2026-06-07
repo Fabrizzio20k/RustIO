@@ -157,3 +157,52 @@ fn collect_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
         }
     }
 }
+
+pub struct MergeCode {
+    root: PathBuf,
+}
+
+impl MergeCode {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct MergeCodeArgs {
+    pub path: String,
+    pub chunk: String,
+}
+
+impl Tool for MergeCode {
+    const NAME: &'static str = "merge_code";
+    type Error = ToolError;
+    type Args = MergeCodeArgs;
+    type Output = String;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Añade un fragmento de código a un archivo existente en el workspace (Pipelining).".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Ruta relativa al workspace" },
+                    "chunk": { "type": "string", "description": "Fragmento de código a añadir al final del archivo" }
+                },
+                "required": ["path", "chunk"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use std::io::Write;
+        let path = resolve(&self.root, &args.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        writeln!(file, "\n{}", args.chunk)?;
+        Ok(format!("ok: merged {} bytes -> {}", args.chunk.len(), args.path))
+    }
+}

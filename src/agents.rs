@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum Role {
     Coder,
     Reviewer,
+    Fixer,
 }
 
 impl Role {
@@ -13,6 +14,7 @@ impl Role {
         match self {
             Role::Coder => "coder",
             Role::Reviewer => "reviewer",
+            Role::Fixer => "fixer",
         }
     }
 }

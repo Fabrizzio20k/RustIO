@@ -2,7 +2,7 @@ mod files;
 mod python;
 mod reference;
 
-pub use files::{ListFiles, ReadFile, WriteFile};
+pub use files::{ListFiles, ReadFile, WriteFile, MergeCode};
 pub use python::{InstallPackages, RunPython, SetupVenv};
 pub use reference::{ConsultReference, Dht11Reference, Mq135Reference};
 

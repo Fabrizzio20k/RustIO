@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 pub enum Provider {
     Groq,
     Local,
+    OpenAI,
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +28,8 @@ impl Config {
         {
             "groq" => Provider::Groq,
             "local" => Provider::Local,
-            other => bail!("LLM_PROVIDER inválido: '{other}' (usa 'groq' o 'local')"),
+            "openai" => Provider::OpenAI,
+            other => bail!("LLM_PROVIDER inválido: '{other}' (usa 'groq', 'local' o 'openai')"),
         };
 
         let model = std::env::var("LLM_MODEL")
@@ -43,6 +45,11 @@ impl Config {
                 let url = std::env::var("LOCAL_BASE_URL")
                     .unwrap_or_else(|_| "http://localhost:8080/v1".to_string());
                 ("EMPTY".to_string(), url)
+            }
+            Provider::OpenAI => {
+                let key = std::env::var("OPENAI_API_KEY")
+                    .context("Falta OPENAI_API_KEY para LLM_PROVIDER=openai")?;
+                (key, "https://api.openai.com/v1".to_string())
             }
         };
 

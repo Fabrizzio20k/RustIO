@@ -28,7 +28,16 @@ fi
 
 cargo build --release
 
-llama-server -m "$MODEL_FILE" --port "$PORT" --jinja $SERVER_ARGS &
+if command -v llama-server >/dev/null 2>&1; then
+  LLAMA_CMD="llama-server"
+elif [ -x "./llama-server" ]; then
+  LLAMA_CMD="./llama-server"
+else
+  echo "Error: llama-server no encontrado."
+  exit 1
+fi
+
+$LLAMA_CMD -m "$MODEL_FILE" --port "$PORT" --jinja $SERVER_ARGS &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
