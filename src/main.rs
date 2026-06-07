@@ -1,37 +1,82 @@
-mod agents;
-mod config;
-mod context;
-mod llm;
-mod orchestrator;
-mod prompts;
-mod tools;
+mod core;
+mod ui;
 
 use anyhow::Result;
+use crate::core::config::Config;
+use crate::core::llm::{Llm, Token};
+use crate::core::state::App;
+use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
+use futures::StreamExt;
+use ratatui::DefaultTerminal;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::{self, UnboundedSender};
 
-use config::Config;
-use context::ContextStore;
-use llm::LlmFactory;
-use orchestrator::Orchestrator;
-use prompts::Prompts;
-
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
-    let cfg = Config::from_env()?;
-    println!("Proveedor: {:?} | Modelo: {}", cfg.provider, cfg.model);
+    dotenvy::dotenv().ok();
+    let config = Config::load()?;
+    let llm = Arc::new(Llm::new(&config)?);
+    let mut app = App::new(&config);
 
-    std::fs::create_dir_all(&cfg.workspace_dir)?;
+    let mut terminal = ratatui::init();
+    let result = run(&mut terminal, &mut app, llm).await;
+    ratatui::restore();
+    result
+}
 
-    let factory = LlmFactory::new(&cfg)?;
-    let prompts = Prompts::load(&cfg.prompts_dir)?;
-    let ctx = ContextStore::new("context.db")?;
-    let mut orchestrator = Orchestrator::new(factory, ctx, prompts, cfg.workspace_dir.into());
+async fn run(terminal: &mut DefaultTerminal, app: &mut App, llm: Arc<Llm>) -> Result<()> {
+    let mut events = EventStream::new();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Token>();
+    let mut ticker = tokio::time::interval(Duration::from_millis(90));
 
-    let task = std::env::args().nth(1).unwrap_or_else(|| {
-        "Crea un script python que use requests para consumir una api publica de perros, la de dogs api y que imprima el resultado en consola"
-            .to_string()
-    });
+    loop {
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        if app.should_quit {
+            return Ok(());
+        }
 
-    let result = orchestrator.run(&task).await?;
-    println!("\n=== ENTREGABLE FINAL ===\n{result}");
-    Ok(())
+        tokio::select! {
+            maybe_event = events.next() => {
+                if let Some(Ok(event)) = maybe_event {
+                    handle_event(app, event, &llm, &tx);
+                }
+            }
+            Some(token) = rx.recv() => {
+                app.on_token(token);
+            }
+            _ = ticker.tick() => {
+                app.tick();
+            }
+        }
+    }
+}
+
+fn handle_event(app: &mut App, event: Event, llm: &Arc<Llm>, tx: &UnboundedSender<Token>) {
+    let Event::Key(key) = event else {
+        return;
+    };
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.should_quit = true;
+        }
+        KeyCode::Enter => {
+            if let Some((history, prompt)) = app.submit() {
+                let future = llm.run(history, prompt, tx.clone());
+                tokio::spawn(future);
+            }
+        }
+        KeyCode::Backspace => {
+            app.input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.input.push(c);
+        }
+        _ => {}
+    }
 }

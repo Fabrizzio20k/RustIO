@@ -37,3 +37,7 @@ context.db-*
 workspace/
 
 models/
+
+# logs de llama-server (run.ps1)
+llama-server.log
+llama-server.err.log
