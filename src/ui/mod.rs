@@ -2,6 +2,7 @@ mod chat;
 mod footer;
 mod header;
 mod input;
+mod markdown;
 pub mod theme;
 
 use crate::core::state::App;

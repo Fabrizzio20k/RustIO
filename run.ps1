@@ -12,4 +12,8 @@ if (-not (Test-Path $ModelFile)) {
     curl.exe -L -o $ModelFile $ModelUrl
 }
 
-llama-server --model $ModelFile --port $Port --ctx-size $CtxSize
+llama-server --model $ModelFile --port $Port --ctx-size $CtxSize `
+    --jinja `
+    --threads 4 -fa on `
+    --cache-type-k q8_0 --cache-type-v q8_0 `
+    --mlock --cont-batching

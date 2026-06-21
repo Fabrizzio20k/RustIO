@@ -8,6 +8,9 @@ pub const MUTED: Color = Color::Rgb(120, 132, 144);
 pub const FAINT: Color = Color::Rgb(78, 86, 96);
 pub const BAR_BG: Color = Color::Rgb(20, 26, 33);
 pub const PILL_FG: Color = Color::Rgb(8, 12, 16);
+pub const CODE_FG: Color = Color::Rgb(152, 195, 121);
+pub const CODE_BG: Color = Color::Rgb(28, 34, 42);
+pub const SELECT_BG: Color = Color::Rgb(45, 72, 96);
 
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 

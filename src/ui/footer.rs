@@ -17,7 +17,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Status::Thinking => " pensando ",
         Status::Streaming => " respondiendo ",
     };
-    let pill = Line::from(vec![
+    let mut pill = vec![
         Span::styled(
             label,
             Style::default().fg(PILL_FG).bg(ACCENT).bold(),
@@ -26,7 +26,14 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
             format!("  {} · {}", app.provider, app.model),
             Style::default().fg(MUTED).bg(BAR_BG),
         ),
-    ]);
+    ];
+    if app.tok_per_sec >= 1.0 {
+        pill.push(Span::styled(
+            format!("  ~{:.0} tok/s", app.tok_per_sec),
+            Style::default().fg(ACCENT).bg(BAR_BG),
+        ));
+    }
+    let pill = Line::from(pill);
 
     let hints = Line::from(vec![
         Span::styled("↑↓", Style::default().fg(MUTED).bg(BAR_BG)),

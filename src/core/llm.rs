@@ -1,5 +1,6 @@
 use crate::core::config::{Config, Provider};
 use crate::core::memory::{self, Turn};
+use crate::core::tools::{RunPython, RunShell};
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use futures::future::BoxFuture;
@@ -75,6 +76,8 @@ pub struct Llm {
 
 impl Llm {
     pub fn new(config: &Config) -> Result<Self> {
+        let ws = &config.workspace_dir;
+        let _ = std::fs::create_dir_all(ws);
         let inner: Arc<dyn Backend> = match config.provider {
             Provider::Local => {
                 let key = config.api_key.clone().unwrap_or_else(|| "local".into());
@@ -86,6 +89,9 @@ impl Llm {
                 let agent = client
                     .agent(&config.model)
                     .preamble(&config.system_prompt)
+                    .default_max_turns(8)
+                    .tool(RunPython::new(ws.clone()))
+                    .tool(RunShell::new(ws.clone()))
                     .build();
                 Arc::new(AgentBackend(Arc::new(agent)))
             }
@@ -95,6 +101,9 @@ impl Llm {
                 let agent = client
                     .agent(&config.model)
                     .preamble(&config.system_prompt)
+                    .default_max_turns(8)
+                    .tool(RunPython::new(ws.clone()))
+                    .tool(RunShell::new(ws.clone()))
                     .build();
                 Arc::new(AgentBackend(Arc::new(agent)))
             }

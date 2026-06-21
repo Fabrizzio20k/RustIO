@@ -10,4 +10,8 @@ if [ ! -f "$MODEL_FILE" ]; then
   curl -L -o "$MODEL_FILE" "$MODEL_URL"
 fi
 
-llama-server --model "$MODEL_FILE" --port "$PORT" --ctx-size "$CTX_SIZE"
+llama-server --model "$MODEL_FILE" --port "$PORT" --ctx-size "$CTX_SIZE" \
+  --jinja \
+  --threads 4 -fa on \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --mlock --cont-batching

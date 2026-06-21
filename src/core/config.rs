@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
@@ -24,6 +25,7 @@ pub struct Config {
     pub api_key: Option<String>,
     pub system_prompt: String,
     pub history_budget_tokens: usize,
+    pub workspace_dir: PathBuf,
 }
 
 impl Config {
@@ -48,7 +50,14 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(3000);
 
-        let system_prompt = "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Responde de forma clara, concisa y en espanol y sin emojis.".into();
+        let system_prompt = format!(
+            "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Te ejecutas en un sistema operativo '{}'; usa siempre comandos nativos de ese sistema (en windows: netsh, powershell; en linux: nmcli, iw, ip). Responde de forma clara, concisa y en espanol y sin emojis.",
+            std::env::consts::OS
+        );
+
+        let workspace_dir = env::var("WORKSPACE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("workspace"));
 
         Ok(Self {
             provider,
@@ -57,6 +66,7 @@ impl Config {
             api_key,
             system_prompt,
             history_budget_tokens,
+            workspace_dir,
         })
     }
 }

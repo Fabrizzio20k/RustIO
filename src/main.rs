@@ -5,7 +5,10 @@ use anyhow::Result;
 use crate::core::config::Config;
 use crate::core::llm::{Llm, Token};
 use crate::core::state::App;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEventKind,
+};
 use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use std::sync::Arc;
@@ -17,10 +20,18 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::load()?;
     let llm = Arc::new(Llm::new(&config)?);
-    let mut app = App::new(&config);
+    let mut app = App::new(&config)?;
 
     let mut terminal = ratatui::init();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = std::fs::write("rustio_panic.log", info.to_string());
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+        prev_hook(info);
+    }));
+    let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let result = run(&mut terminal, &mut app, llm).await;
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     result
 }
@@ -53,17 +64,46 @@ async fn run(terminal: &mut DefaultTerminal, app: &mut App, llm: Arc<Llm>) -> Re
 }
 
 fn handle_event(app: &mut App, event: Event, llm: &Arc<Llm>, tx: &UnboundedSender<Token>) {
-    let Event::Key(key) = event else {
-        return;
-    };
-    if key.kind != KeyEventKind::Press {
-        return;
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key, llm, tx),
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => app.mouse_down(mouse.column, mouse.row),
+            MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(mouse.column, mouse.row),
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(text) = app.mouse_up() {
+                    set_clipboard(text);
+                }
+            }
+            MouseEventKind::ScrollUp => app.scroll_up(3),
+            MouseEventKind::ScrollDown => app.scroll_down(3),
+            _ => {}
+        },
+        _ => {}
     }
+}
 
+// ponytail: nueva instancia por copia; cachear en App si copiar muchísimo molesta
+fn set_clipboard(text: String) {
+    if !text.is_empty() {
+        if let Ok(mut clip) = arboard::Clipboard::new() {
+            let _ = clip.set_text(text);
+        }
+    }
+}
+
+fn handle_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    llm: &Arc<Llm>,
+    tx: &UnboundedSender<Token>,
+) {
     match key.code {
         KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.should_quit = true;
+            match app.copy_selection() {
+                Some(text) => set_clipboard(text),
+                None => app.should_quit = true,
+            }
         }
         KeyCode::Enter => {
             if let Some(turn) = app.submit() {
