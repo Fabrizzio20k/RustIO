@@ -34,6 +34,7 @@ impl Store {
                     Role::Assistant
                 },
                 content: r.get(1)?,
+                activity: Vec::new(),
             })
         })?;
         let messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -106,8 +107,8 @@ mod tests {
     fn round_trip() {
         let store = Store::open(":memory:").unwrap();
         let msgs = vec![
-            ChatMessage { role: Role::User, content: "hola".into() },
-            ChatMessage { role: Role::Assistant, content: "buenas".into() },
+            ChatMessage { role: Role::User, content: "hola".into(), activity: Vec::new() },
+            ChatMessage { role: Role::Assistant, content: "buenas".into(), activity: Vec::new() },
         ];
         store.save(&msgs, Some("resumen previo"), 1).unwrap();
 

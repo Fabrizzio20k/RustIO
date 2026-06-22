@@ -1,8 +1,23 @@
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+// "Activa" el venv para un proceso hijo sin shell: VIRTUAL_ENV + PATH con su bin al frente.
+fn activated_path(venv: &Path) -> OsString {
+    let bin = if cfg!(windows) {
+        venv.join("Scripts")
+    } else {
+        venv.join("bin")
+    };
+    let mut paths = vec![bin];
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths).unwrap_or_default()
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -50,11 +65,16 @@ impl RunPython {
         Self { workspace }
     }
 
+    fn venv_dir(&self) -> PathBuf {
+        self.workspace.join(".venv")
+    }
+
     fn venv_python(&self) -> PathBuf {
+        let venv = self.venv_dir();
         if cfg!(windows) {
-            self.workspace.join(".venv/Scripts/python.exe")
+            venv.join("Scripts/python.exe")
         } else {
-            self.workspace.join(".venv/bin/python")
+            venv.join("bin/python")
         }
     }
 
@@ -113,12 +133,14 @@ impl Tool for RunPython {
     async fn call(&self, args: RunPythonArgs) -> Result<RunOutput, ToolFail> {
         self.ensure_venv().await?;
         let python = self.venv_python();
+        let venv = self.venv_dir();
 
         if !args.pip.is_empty() {
             let out = Command::new("uv")
-                .args(["pip", "install", "--python"])
-                .arg(&python)
+                .args(["pip", "install"])
                 .args(&args.pip)
+                .env("VIRTUAL_ENV", &venv)
+                .env("PATH", activated_path(&venv))
                 .current_dir(&self.workspace)
                 .output()
                 .await
@@ -142,6 +164,8 @@ impl Tool for RunPython {
 
         let out = Command::new(&python)
             .arg(&file)
+            .env("VIRTUAL_ENV", &venv)
+            .env("PATH", activated_path(&venv))
             .current_dir(&self.workspace)
             .output()
             .await

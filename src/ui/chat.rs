@@ -73,6 +73,16 @@ fn build_lines(app: &App, width: usize) -> (Vec<Line<'static>>, Vec<String>, Vec
         ];
         push(label_spans, usize::MAX);
 
+        for act in &message.activity {
+            push(
+                vec![Span::styled(
+                    format!("  ⚙ {act}"),
+                    Style::default().fg(FAINT),
+                )],
+                usize::MAX,
+            );
+        }
+
         let is_last = index + 1 == app.messages.len();
         if message.content.is_empty() && is_last && app.status == Status::Thinking {
             push(

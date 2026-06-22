@@ -38,6 +38,7 @@ pub enum Role {
 pub struct ChatMessage {
     pub role: Role,
     pub content: String,
+    pub activity: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -319,10 +320,12 @@ impl App {
         self.messages.push(ChatMessage {
             role: Role::User,
             content: prompt,
+            activity: Vec::new(),
         });
         self.messages.push(ChatMessage {
             role: Role::Assistant,
             content: String::new(),
+            activity: Vec::new(),
         });
         self.status = Status::Thinking;
         self.scroll = 0;
@@ -346,6 +349,24 @@ impl App {
                 }
                 if let Some(last) = self.messages.last_mut() {
                     last.content.push_str(&delta);
+                }
+            }
+            Token::ToolCall { name, preview } => {
+                self.status = Status::Streaming;
+                if let Some(last) = self.messages.last_mut() {
+                    let line = if preview.is_empty() {
+                        name
+                    } else {
+                        format!("{name}  {preview}")
+                    };
+                    last.activity.push(line);
+                }
+            }
+            Token::ToolResult { summary } => {
+                if let Some(last) = self.messages.last_mut() {
+                    if let Some(line) = last.activity.last_mut() {
+                        line.push_str(&format!("  →  {summary}"));
+                    }
                 }
             }
             Token::Summary { text, upto } => {

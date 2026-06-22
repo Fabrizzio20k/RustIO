@@ -51,13 +51,18 @@ impl Config {
             .unwrap_or(3000);
 
         let system_prompt = format!(
-            "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Te ejecutas en un sistema operativo '{}'; usa siempre comandos nativos de ese sistema (en windows: netsh, powershell; en linux: nmcli, iw, ip). Responde de forma clara, concisa y en espanol y sin emojis.",
+            "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. Te ejecutas en un sistema operativo '{}'; usa siempre comandos nativos de ese sistema (en windows: netsh, powershell; en linux: nmcli, iw, ip). Tienes herramientas para ejecutar codigo (run_python) y comandos de shell (run_shell): SIEMPRE intenta resolver con ellas (leer hardware, specs del sistema, redes, sensores) antes de decir que no puedes. Si una ejecucion falla, corrige segun el error y reintenta. Responde de forma clara, concisa y en espanol y sin emojis.",
             std::env::consts::OS
         );
 
         let workspace_dir = env::var("WORKSPACE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("workspace"));
+        let workspace_dir = if workspace_dir.is_absolute() {
+            workspace_dir
+        } else {
+            env::current_dir().unwrap_or_default().join(workspace_dir)
+        };
 
         Ok(Self {
             provider,

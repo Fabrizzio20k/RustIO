@@ -6,18 +6,72 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use rig::agent::{Agent, MultiTurnStreamItem};
 use rig::client::BearerAuth;
+use rig::completion::message::{ToolResult, ToolResultContent};
 use rig::completion::{CompletionModel, GetTokenUsage, Message, Prompt};
 use rig::prelude::{CompletionClient, ProviderClient};
 use rig::providers::{groq, openai};
-use rig::streaming::{StreamedAssistantContent, StreamingChat};
+use rig::streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub enum Token {
     Delta(String),
+    ToolCall { name: String, preview: String },
+    ToolResult { summary: String },
     Summary { text: String, upto: usize },
     Done,
     Error(String),
+}
+
+fn tool_preview(args: &serde_json::Value) -> String {
+    let raw = args
+        .get("command")
+        .or_else(|| args.get("code"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let first = raw.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    first.chars().take(60).collect()
+}
+
+fn result_summary(result: &ToolResult) -> String {
+    let text = result
+        .content
+        .iter()
+        .find_map(|c| match c {
+            ToolResultContent::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        let code = v.get("exit_code").and_then(|x| x.as_i64());
+        let stdout = v.get("stdout").and_then(|x| x.as_str()).unwrap_or("");
+        let stderr = v.get("stderr").and_then(|x| x.as_str()).unwrap_or("");
+        let src = match code {
+            Some(0) => stdout,
+            _ if !stderr.is_empty() => stderr,
+            _ => stdout,
+        };
+        let snippet: String = src
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .chars()
+            .take(60)
+            .collect();
+        return match code {
+            Some(c) if snippet.is_empty() => format!("exit {c}"),
+            Some(c) => format!("exit {c} · {snippet}"),
+            None => snippet,
+        };
+    }
+
+    text.lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(60)
+        .collect()
 }
 
 trait Backend: Send + Sync {
@@ -57,6 +111,21 @@ where
                         StreamedAssistantContent::Text(text),
                     )) => {
                         let _ = tx.send(Token::Delta(text.text));
+                    }
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(
+                        StreamedAssistantContent::ToolCall { tool_call, .. },
+                    )) => {
+                        let _ = tx.send(Token::ToolCall {
+                            name: tool_call.function.name.clone(),
+                            preview: tool_preview(&tool_call.function.arguments),
+                        });
+                    }
+                    Ok(MultiTurnStreamItem::StreamUserItem(
+                        StreamedUserContent::ToolResult { tool_result, .. },
+                    )) => {
+                        let _ = tx.send(Token::ToolResult {
+                            summary: result_summary(&tool_result),
+                        });
                     }
                     Ok(_) => {}
                     Err(err) => {
