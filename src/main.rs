@@ -117,6 +117,7 @@ fn handle_key(
         KeyCode::PageDown => app.scroll_down(10),
         KeyCode::Home => app.scroll_to_top(),
         KeyCode::End => app.scroll_to_bottom(),
+        KeyCode::Tab => app.complete_command(),
         KeyCode::Backspace => {
             app.input.pop();
         }

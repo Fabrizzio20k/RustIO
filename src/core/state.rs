@@ -6,7 +6,11 @@ use anyhow::Result;
 use ratatui::layout::Rect;
 use std::time::Instant;
 
-const HELP: &str = "Comandos:\n/help    muestra esta ayuda\n/resume  describe la memoria actual (resumen + estado)\n/clear   borra la conversación y la memoria guardada";
+pub const COMMANDS: &[(&str, &str)] = &[
+    ("/help", "muestra esta ayuda"),
+    ("/resume", "describe la memoria actual"),
+    ("/clear", "borra la conversación y la memoria"),
+];
 
 #[derive(Clone, Copy)]
 pub struct Selection {
@@ -110,9 +114,36 @@ impl App {
             .save(&self.messages, self.summary.as_deref(), self.summarized_upto);
     }
 
+    pub fn command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
+        let input = self.input.trim_start();
+        if !input.starts_with('/') || input.contains(' ') {
+            return Vec::new();
+        }
+        COMMANDS
+            .iter()
+            .filter(|(name, _)| name.starts_with(input))
+            .copied()
+            .collect()
+    }
+
+    pub fn complete_command(&mut self) {
+        if let Some((name, _)) = self.command_suggestions().first() {
+            self.input = format!("{name} ");
+        }
+    }
+
+    fn help_text(&self) -> String {
+        let body = COMMANDS
+            .iter()
+            .map(|(name, desc)| format!("{name}  {desc}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("Comandos:\n{body}")
+    }
+
     fn run_command(&mut self, cmd: &str) {
         match cmd.split_whitespace().next().unwrap_or("") {
-            "/help" => self.notice = Some(HELP.to_string()),
+            "/help" => self.notice = Some(self.help_text()),
             "/resume" | "/resumen" => self.notice = Some(self.memory_overview()),
             "/clear" => {
                 self.messages.clear();
