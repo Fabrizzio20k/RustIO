@@ -111,7 +111,7 @@ impl Tool for RunPython {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Ejecuta código Python en un entorno virtual gestionado por uv (Python 3.13) y devuelve exit_code, stdout y stderr. El código DEBE imprimir los resultados con print(). Usa 'pip' para instalar dependencias antes de ejecutar. Si exit_code no es 0, corrige el código según stderr y vuelve a llamar.".to_string(),
+            description: "Ejecuta código Python en un entorno virtual aislado gestionado por uv (Python 3.13). Devuelve exit_code, stdout y stderr. Reglas: (1) El código DEBE imprimir resultados con print(). (2) Si necesitas un paquete externo, ponlo en el campo 'pip'; se instalará con 'uv pip install' en el venv antes de ejecutar. (3) Si obtienes ModuleNotFoundError o ImportError, reintenta añadiendo el paquete al campo 'pip'. (4) NUNCA uses 'pip install' ni 'uv pip' en run_shell para instalar paquetes Python; usa siempre el campo 'pip' de esta herramienta. (5) Si exit_code no es 0, corrige el código según stderr y vuelve a llamar.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -122,7 +122,7 @@ impl Tool for RunPython {
                     "pip": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Paquetes pip a instalar en el venv antes de ejecutar (opcional)."
+                        "description": "Paquetes a instalar en el venv con 'uv pip install' antes de ejecutar el código. Úsalo siempre que el código importe un módulo externo o cuando obtengas ModuleNotFoundError. Ejemplo: ['numpy', 'requests==2.31.0']."
                     }
                 },
                 "required": ["code"]
