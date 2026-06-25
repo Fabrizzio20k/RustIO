@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub enum Provider {
     Local,
     Groq,
+    OpenAI,
 }
 
 impl Provider {
@@ -13,6 +14,7 @@ impl Provider {
         match self {
             Provider::Local => "local",
             Provider::Groq => "groq",
+            Provider::OpenAI => "openai",
         }
     }
 }
@@ -37,13 +39,22 @@ impl Config {
         {
             "local" => Provider::Local,
             "groq" => Provider::Groq,
+            "openai" => Provider::OpenAI,
             other => bail!("LLM_PROVIDER no soportado: {other}"),
         };
 
         let model = env::var("LLM_MODEL").map_err(|_| anyhow!("LLM_MODEL es requerido"))?;
         let base_url =
             env::var("LOCAL_BASE_URL").unwrap_or_else(|_| "http://localhost:8080/v1".into());
-        let api_key = env::var("GROQ_API_KEY").ok();
+
+        // Selecciona la api_key según el provider activo
+        let api_key = match provider {
+            Provider::Groq => env::var("GROQ_API_KEY").ok(),
+            Provider::OpenAI => env::var("OPENAI_API_KEY").ok(),
+            Provider::Local => env::var("OPENAI_API_KEY")
+                .ok()
+                .or_else(|| env::var("GROQ_API_KEY").ok()),
+        };
 
         let history_budget_tokens = env::var("HISTORY_BUDGET_TOKENS")
             .ok()

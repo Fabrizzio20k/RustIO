@@ -176,6 +176,22 @@ impl Llm {
                     .build();
                 Arc::new(AgentBackend(Arc::new(agent)))
             }
+            Provider::OpenAI => {
+                let key = config
+                    .api_key
+                    .clone()
+                    .ok_or_else(|| anyhow!("OPENAI_API_KEY es requerido para el provider openai"))?;
+                let client = openai::Client::new(&key)
+                    .map_err(|e| anyhow!("no se pudo crear el cliente openai: {e:?}"))?;
+                let agent = client
+                    .agent(&config.model)
+                    .preamble(&config.system_prompt)
+                    .default_max_turns(8)
+                    .tool(RunPython::new(ws.clone()))
+                    .tool(RunShell::new(ws.clone()))
+                    .build();
+                Arc::new(AgentBackend(Arc::new(agent)))
+            }
         };
 
         Ok(Self { inner })

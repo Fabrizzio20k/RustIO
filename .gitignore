@@ -43,3 +43,5 @@ llama-server.log
 llama-server.err.log
 
 *.db
+
+.DS_Store
