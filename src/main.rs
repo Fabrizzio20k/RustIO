@@ -17,10 +17,12 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenvy::dotenv().ok();
-    let config = Config::load()?;
+    let db = "rustio.db";
+    let store = crate::core::store::Store::open(&db)?;
+    
+    let config = Config::load(Some(&store))?;
     let llm = Arc::new(Llm::new(&config)?);
-    let mut app = App::new(&config)?;
+    let mut app = App::new(config, store)?;
 
     let mut terminal = ratatui::init();
     let prev_hook = std::panic::take_hook();
@@ -36,12 +38,68 @@ async fn main() -> Result<()> {
     result
 }
 
-async fn run(terminal: &mut DefaultTerminal, app: &mut App, llm: Arc<Llm>) -> Result<()> {
+async fn run(terminal: &mut DefaultTerminal, app: &mut App, mut llm: Arc<Llm>) -> Result<()> {
     let mut events = EventStream::new();
     let (tx, mut rx) = mpsc::unbounded_channel::<Token>();
     let mut ticker = tokio::time::interval(Duration::from_millis(90));
 
     loop {
+        if app.should_reload_llm {
+            app.should_reload_llm = false;
+            match Llm::new(&app.config) {
+                Ok(new_llm) => {
+                    llm = Arc::new(new_llm);
+                }
+                Err(e) => {
+                    app.notice = Some(format!("Error al recargar LLM: {}", e));
+                }
+            }
+        }
+
+        if app.should_test_llm {
+            app.should_test_llm = false;
+            if let Some((provider, model, base_url, api_key)) = &app.pending_test_params {
+                let p = provider.clone();
+                let m = model.clone();
+                let u = base_url.clone();
+                let k = api_key.clone();
+                let tx_clone = tx.clone();
+                
+                tokio::spawn(async move {
+                    let cfg = crate::core::config::Config {
+                        provider: match p.as_str() {
+                            "openai" => crate::core::config::Provider::OpenAI,
+                            "groq" => crate::core::config::Provider::Groq,
+                            "local" => crate::core::config::Provider::Local,
+                            "anthropic" => crate::core::config::Provider::Anthropic,
+                            "deepseek" => crate::core::config::Provider::DeepSeek,
+                            _ => {
+                                let _ = tx_clone.send(Token::TestResult(Some(format!("Proveedor '{}' no soportado. Usa openai, groq, anthropic, deepseek o local.", p))));
+                                return;
+                            }
+                        },
+                        model: m,
+                        base_url: u.unwrap_or_else(|| "http://localhost:11434/v1".into()),
+                        api_key: k,
+                        system_prompt: String::new(),
+                        history_budget_tokens: 1000,
+                        workspace_dir: std::path::PathBuf::from("workspace"),
+                        is_configured: true,
+                    };
+                    
+                    match Llm::new(&cfg) {
+                        Ok(test_llm) => {
+                            match test_llm.test_connection().await {
+                                Ok(_) => { let _ = tx_clone.send(Token::TestResult(None)); }
+                                Err(e) => { let _ = tx_clone.send(Token::TestResult(Some(e.to_string()))); }
+                            }
+                        }
+                        Err(e) => { let _ = tx_clone.send(Token::TestResult(Some(e.to_string()))); }
+                    }
+                });
+            }
+        }
+
         terminal.draw(|frame| ui::draw(frame, app))?;
         if app.should_quit {
             return Ok(());
@@ -97,6 +155,11 @@ fn handle_key(
     llm: &Arc<Llm>,
     tx: &UnboundedSender<Token>,
 ) {
+    if app.model_setup.is_some() {
+        app.handle_model_setup_key(key);
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {

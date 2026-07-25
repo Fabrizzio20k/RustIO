@@ -39,9 +39,9 @@ impl Store {
         })?;
         let messages = rows.collect::<Result<Vec<_>, _>>()?;
 
-        let summary = self.meta("summary")?.filter(|s| !s.is_empty());
+        let summary = self.get_meta("summary")?.filter(|s| !s.is_empty());
         let summarized_upto = self
-            .meta("summarized_upto")?
+            .get_meta("summarized_upto")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
 
@@ -52,12 +52,20 @@ impl Store {
         })
     }
 
-    fn meta(&self, key: &str) -> Result<Option<String>> {
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
         let value = self
             .conn
             .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
             .optional()?;
         Ok(value)
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            [key, value],
+        )?;
+        Ok(())
     }
 
     // ponytail: snapshot completo por turno; O(n) escrituras, sobra hasta miles de mensajes

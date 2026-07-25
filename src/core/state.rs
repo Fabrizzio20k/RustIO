@@ -6,10 +6,33 @@ use anyhow::Result;
 use ratatui::layout::Rect;
 use std::time::Instant;
 
+pub enum ModelSetupStep {
+    CategoryMenu,
+    PresetMenu { is_local: bool },
+    PresetKey { preset: String },
+    ManualProvider,
+    ManualModel { provider: String },
+    ManualBaseUrl { provider: String, model: String },
+    ManualApiKey { provider: String, model: String, base_url: Option<String> },
+    TestingConnection,
+}
+
+pub struct ModelSetup {
+    pub step: ModelSetupStep,
+    pub menu_items: Vec<String>,
+    pub selected: usize,
+    pub input: String,
+    pub notice: Option<String>,
+}
+
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "muestra esta ayuda"),
     ("/resume", "describe la memoria actual"),
     ("/clear", "borra la conversación y la memoria"),
+    (
+        "/model",
+        "cambia el modelo (/model <preset> o /model <prov> <mod> [key/url])",
+    ),
 ];
 
 #[derive(Clone, Copy)]
@@ -72,17 +95,20 @@ pub struct App {
     chat_prefix: Vec<usize>,
     stream_start: Option<Instant>,
     stream_count: usize,
-    summary: Option<String>,
-    summarized_upto: usize,
-    budget: usize,
+    pub summary: Option<String>,
+    pub summarized_upto: usize,
+    pub budget: usize,
+    pub config: Config,
+    pub should_reload_llm: bool,
+    pub model_setup: Option<ModelSetup>,
+    pub pending_test_params: Option<(String, String, Option<String>, Option<String>)>,
+    pub should_test_llm: bool,
 }
 
 impl App {
-    pub fn new(config: &Config) -> Result<Self> {
-        let db = std::env::var("RUSTIO_DB").unwrap_or_else(|_| "rustio.db".into());
-        let store = Store::open(&db)?;
+    pub fn new(config: Config, store: Store) -> Result<Self> {
         let loaded = store.load()?;
-        Ok(Self {
+        let mut app = Self {
             provider: config.provider.label().to_string(),
             model: config.model.clone(),
             messages: loaded.messages,
@@ -105,13 +131,24 @@ impl App {
             summary: loaded.summary,
             summarized_upto: loaded.summarized_upto,
             budget: config.history_budget_tokens,
-        })
+            config: config.clone(),
+            should_reload_llm: false,
+            model_setup: None,
+            pending_test_params: None,
+            should_test_llm: false,
+        };
+        if !config.is_configured {
+            app.run_command("/model");
+        }
+        Ok(app)
     }
 
     fn persist(&self) {
-        let _ = self
-            .store
-            .save(&self.messages, self.summary.as_deref(), self.summarized_upto);
+        let _ = self.store.save(
+            &self.messages,
+            self.summary.as_deref(),
+            self.summarized_upto,
+        );
     }
 
     pub fn command_suggestions(&self) -> Vec<(&'static str, &'static str)> {
@@ -133,12 +170,19 @@ impl App {
     }
 
     fn help_text(&self) -> String {
-        let body = COMMANDS
-            .iter()
-            .map(|(name, desc)| format!("{name}  {desc}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("Comandos:\n{body}")
+        "Comandos disponibles en RustIO:\n\
+         \n\
+           /help       Muestra esta ayuda detallada.\n\
+           /resume     Muestra información de la memoria actual (resumen, mensajes, tokens).\n\
+           /clear      Borra la conversación y limpia la memoria.\n\
+         \n\
+           /model      Gestión del modelo LLM (cambio en caliente)\n\
+                       Uso:\n\
+                         • /model                          => Lista los presets disponibles en models.json\n\
+                         • /model <nombre_preset>          => Carga un modelo desde tu JSON (ej: /model local-llama3)\n\
+                         • /model <preset> <key o url>     => Carga el preset sobrescribiendo su Key o URL temporalmente\n\
+                         • /model <prov> <modelo> <extra>  => Define manualmente sin preset. (Ej: /model openai gpt-4o sk-abc...)"
+            .to_string()
     }
 
     fn run_command(&mut self, cmd: &str) {
@@ -154,7 +198,236 @@ impl App {
                 let _ = self.store.clear();
                 self.notice = Some("Conversación y memoria borradas.".to_string());
             }
+            "/model" => {
+                let menu_items = vec![
+                    "Modelo Local".to_string(),
+                    "Modelo en la Nube (API)".to_string(),
+                ];
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::CategoryMenu,
+                    menu_items,
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("¿Qué tipo de modelo usarás?".into()),
+                });
+            }
             other => self.notice = Some(format!("Comando desconocido: {other}. Usa /help.")),
+        }
+    }
+
+    pub fn handle_model_setup_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        let Some(setup) = &mut self.model_setup else {
+            return;
+        };
+
+        match key.code {
+            KeyCode::Esc => {
+                self.model_setup = None;
+            }
+            KeyCode::Up => {
+                if let ModelSetupStep::CategoryMenu | ModelSetupStep::PresetMenu { .. } = setup.step
+                {
+                    setup.selected = setup.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let ModelSetupStep::CategoryMenu | ModelSetupStep::PresetMenu { .. } = setup.step
+                {
+                    setup.selected =
+                        (setup.selected + 1).min(setup.menu_items.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Backspace => {
+                setup.input.pop();
+            }
+            KeyCode::Char(c) => {
+                setup.input.push(c);
+            }
+            KeyCode::Enter => {
+                self.submit_model_setup();
+            }
+            _ => {}
+        }
+    }
+
+    fn submit_model_setup(&mut self) {
+        let Some(mut setup) = self.model_setup.take() else {
+            return;
+        };
+
+        match setup.step {
+            ModelSetupStep::CategoryMenu => {
+                let is_local = setup.selected == 0;
+                let presets = crate::core::config::load_presets();
+                let mut menu_items: Vec<String> = presets
+                    .iter()
+                    .filter(|(_, p)| (p.provider == "local") == is_local)
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                menu_items.push("Otro modelo (Manual)".to_string());
+
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::PresetMenu { is_local },
+                    menu_items,
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("Selecciona un preset:".into()),
+                });
+            }
+            ModelSetupStep::PresetMenu { is_local } => {
+                let is_manual = setup.selected == setup.menu_items.len() - 1;
+                if is_manual {
+                    if is_local {
+                        self.model_setup = Some(ModelSetup {
+                            step: ModelSetupStep::ManualModel {
+                                provider: "local".into(),
+                            },
+                            menu_items: Vec::new(),
+                            selected: 0,
+                            input: String::new(),
+                            notice: Some("Modelo (ej: llama3):".into()),
+                        });
+                    } else {
+                        self.model_setup = Some(ModelSetup {
+                            step: ModelSetupStep::ManualProvider,
+                            menu_items: Vec::new(),
+                            selected: 0,
+                            input: String::new(),
+                            notice: Some("Proveedor (ej: openai, groq):".into()),
+                        });
+                    }
+                } else {
+                    let preset = setup.menu_items[setup.selected].clone();
+                    self.model_setup = Some(ModelSetup {
+                        step: ModelSetupStep::PresetKey { preset },
+                        menu_items: Vec::new(),
+                        selected: 0,
+                        input: String::new(),
+                        notice: Some(
+                            "API Key o Base URL (Opcional, presiona Enter para omitir):".into(),
+                        ),
+                    });
+                }
+            }
+            ModelSetupStep::PresetKey { preset } => {
+                let override_key = if setup.input.trim().is_empty() {
+                    None
+                } else {
+                    Some(setup.input.trim().to_string())
+                };
+                let presets = crate::core::config::load_presets();
+                if let Some(p) = presets.get(&preset) {
+                    let key_or_url = override_key.or(p.api_key.clone());
+                    let mut base_url = p.base_url.clone();
+                    let mut api_key = None;
+                    if let Some(e) = key_or_url {
+                        if e.starts_with("http") {
+                            base_url = Some(e);
+                        } else {
+                            api_key = Some(e);
+                        }
+                    }
+                    self.pending_test_params =
+                        Some((p.provider.clone(), p.model.clone(), base_url, api_key));
+                    self.should_test_llm = true;
+                    self.model_setup = Some(ModelSetup {
+                        step: ModelSetupStep::TestingConnection,
+                        menu_items: Vec::new(),
+                        selected: 0,
+                        input: String::new(),
+                        notice: Some("Verificando conexión, por favor espera...".into()),
+                    });
+                }
+            }
+            ModelSetupStep::ManualProvider => {
+                let provider = setup.input.trim().to_string();
+                if provider.is_empty() {
+                    self.model_setup = Some(setup);
+                    return;
+                }
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::ManualModel { provider },
+                    menu_items: Vec::new(),
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("Modelo (ej: gpt-4o, llama3):".into()),
+                });
+            }
+            ModelSetupStep::ManualModel { provider } => {
+                let model = setup.input.trim().to_string();
+                if model.is_empty() {
+                    setup.step = ModelSetupStep::ManualModel { provider };
+                    self.model_setup = Some(setup);
+                    return;
+                }
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::ManualBaseUrl { provider, model },
+                    menu_items: Vec::new(),
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("Base URL (Opcional, presiona Enter para omitir):".into()),
+                });
+            }
+            ModelSetupStep::ManualBaseUrl { provider, model } => {
+                let base_url = if setup.input.trim().is_empty() { None } else { Some(setup.input.trim().to_string()) };
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::ManualApiKey { provider, model, base_url },
+                    menu_items: Vec::new(),
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("API Key (Opcional si usas local, presiona Enter para omitir):".into()),
+                });
+            }
+            ModelSetupStep::ManualApiKey { provider, model, base_url } => {
+                let api_key = if setup.input.trim().is_empty() { None } else { Some(setup.input.trim().to_string()) };
+                self.pending_test_params = Some((provider, model, base_url, api_key));
+                self.should_test_llm = true;
+                self.model_setup = Some(ModelSetup {
+                    step: ModelSetupStep::TestingConnection,
+                    menu_items: Vec::new(),
+                    selected: 0,
+                    input: String::new(),
+                    notice: Some("Verificando conexión, por favor espera...".into()),
+                });
+            }
+            ModelSetupStep::TestingConnection => {
+                // Ignore enter while testing
+                self.model_setup = Some(setup);
+            }
+        }
+    }
+
+    fn apply_model_config(
+        &mut self,
+        provider: &str,
+        model: &str,
+        base_url: Option<String>,
+        api_key: Option<String>,
+    ) {
+        let _ = self.store.set_meta("llm_provider", provider);
+        let _ = self.store.set_meta("llm_model", model);
+        if let Some(url) = base_url {
+            let _ = self.store.set_meta("llm_base_url", &url);
+        }
+        if let Some(key) = api_key {
+            let _ = self.store.set_meta("llm_api_key", &key);
+        }
+
+        match crate::core::config::Config::load(Some(&self.store)) {
+            Ok(new_cfg) => {
+                self.config = new_cfg;
+                self.provider = self.config.provider.label().to_string();
+                self.model = self.config.model.clone();
+                self.should_reload_llm = true;
+                self.notice = Some(format!(
+                    "Modelo cambiado a {} ({})",
+                    self.model, self.provider
+                ));
+            }
+            Err(e) => {
+                self.notice = Some(format!("Error al cargar config: {}", e));
+            }
         }
     }
 
@@ -328,12 +601,20 @@ impl App {
         if prompt.is_empty() {
             return None;
         }
-        self.input.clear();
 
         if prompt.starts_with('/') {
+            self.input.clear();
             self.run_command(&prompt);
             return None;
         }
+
+        if !self.config.is_configured {
+            self.input.clear();
+            self.run_command("/model");
+            self.notice = Some("Debes configurar un modelo primero.".into());
+            return None;
+        }
+        self.input.clear();
         self.notice = None;
 
         let prior = &self.messages[self.summarized_upto..];
@@ -418,6 +699,23 @@ impl App {
                     }
                 }
                 self.status = Status::Idle;
+            }
+            Token::TestResult(res) => {
+                if let Some((provider, model, base_url, api_key)) = self.pending_test_params.take()
+                {
+                    if let Some(err) = res {
+                        if let Some(setup) = &mut self.model_setup {
+                            setup.notice = Some(format!(
+                                "Error de conexión:\n{}\nPresiona Esc para salir.",
+                                err
+                            ));
+                            setup.step = ModelSetupStep::TestingConnection; // stays here showing error
+                        }
+                    } else {
+                        self.apply_model_config(&provider, &model, base_url, api_key);
+                        self.model_setup = None;
+                    }
+                }
             }
         }
     }

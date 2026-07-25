@@ -1,12 +1,28 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
+
+#[derive(serde::Deserialize)]
+pub struct ModelPreset {
+    pub provider: String,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+}
+
+pub fn load_presets() -> HashMap<String, ModelPreset> {
+    let content = std::fs::read_to_string("models.json").unwrap_or_else(|_| "{}".into());
+    serde_json::from_str(&content).unwrap_or_default()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     Local,
     Groq,
     OpenAI,
+    Anthropic,
+    DeepSeek,
 }
 
 impl Provider {
@@ -15,6 +31,8 @@ impl Provider {
             Provider::Local => "local",
             Provider::Groq => "groq",
             Provider::OpenAI => "openai",
+            Provider::Anthropic => "anthropic",
+            Provider::DeepSeek => "deepseek",
         }
     }
 }
@@ -28,38 +46,53 @@ pub struct Config {
     pub system_prompt: String,
     pub history_budget_tokens: usize,
     pub workspace_dir: PathBuf,
+    pub is_configured: bool,
 }
 
 impl Config {
-    pub fn load() -> Result<Self> {
-        let provider = match env::var("LLM_PROVIDER")
-            .unwrap_or_else(|_| "local".into())
-            .to_lowercase()
-            .as_str()
-        {
+    pub fn load(store: Option<&crate::core::store::Store>) -> Result<Self> {
+        let provider_str = if let Some(s) = store {
+            s.get_meta("llm_provider")?
+                .unwrap_or_else(|| "local".into())
+        } else {
+            "local".into()
+        };
+
+        let provider = match provider_str.to_lowercase().as_str() {
             "local" => Provider::Local,
             "groq" => Provider::Groq,
             "openai" => Provider::OpenAI,
+            "anthropic" => Provider::Anthropic,
+            "deepseek" => Provider::DeepSeek,
             other => bail!("LLM_PROVIDER no soportado: {other}"),
         };
 
-        let model = env::var("LLM_MODEL").map_err(|_| anyhow!("LLM_MODEL es requerido"))?;
-        let base_url =
-            env::var("LOCAL_BASE_URL").unwrap_or_else(|_| "http://localhost:8080/v1".into());
-
-        // Selecciona la api_key según el provider activo
-        let api_key = match provider {
-            Provider::Groq => env::var("GROQ_API_KEY").ok(),
-            Provider::OpenAI => env::var("OPENAI_API_KEY").ok(),
-            Provider::Local => env::var("OPENAI_API_KEY")
-                .ok()
-                .or_else(|| env::var("GROQ_API_KEY").ok()),
+        let model = if let Some(s) = store {
+            s.get_meta("llm_model")?.unwrap_or_else(|| "llama3".into())
+        } else {
+            "llama3".into()
         };
 
-        let history_budget_tokens = env::var("HISTORY_BUDGET_TOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3000);
+        let base_url = if let Some(s) = store {
+            s.get_meta("llm_base_url")?
+                .unwrap_or_else(|| "http://localhost:8080/v1".into())
+        } else {
+            "http://localhost:8080/v1".into()
+        };
+
+        let api_key = if let Some(s) = store {
+            s.get_meta("llm_api_key")?
+        } else {
+            None
+        };
+
+        let history_budget_tokens = if let Some(s) = store {
+            s.get_meta("history_budget_tokens")?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(3000)
+        } else {
+            3000
+        };
 
         let system_prompt = format!(
             "Eres RustIO, un asistente para la gestion de dispositivos IoT en una Raspberry Pi. \
@@ -77,9 +110,19 @@ Responde de forma clara, concisa y en espanol y sin emojis.",
             std::env::consts::OS
         );
 
-        let workspace_dir = env::var("WORKSPACE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("workspace"));
+        let workspace_dir = if let Some(s) = store {
+            s.get_meta("workspace_dir")?
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("workspace"))
+        } else {
+            PathBuf::from("workspace")
+        };
+        let is_configured = if let Some(s) = store {
+            s.get_meta("llm_model")?.is_some()
+        } else {
+            false
+        };
+
         let workspace_dir = if workspace_dir.is_absolute() {
             workspace_dir
         } else {
@@ -94,6 +137,7 @@ Responde de forma clara, concisa y en espanol y sin emojis.",
             system_prompt,
             history_budget_tokens,
             workspace_dir,
+            is_configured,
         })
     }
 }

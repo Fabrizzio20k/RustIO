@@ -1,0 +1,32 @@
+{
+  "groq-llama3": {
+    "provider": "groq",
+    "model": "llama3-8b-8192"
+  },
+  "openai-gpt4o": {
+    "provider": "openai",
+    "model": "gpt-4o"
+  },
+  "local-llama3": {
+    "provider": "local",
+    "model": "llama3",
+    "base_url": "http://localhost:11434/v1"
+  },
+  "local-qwen3.5-2b": {
+    "provider": "local",
+    "model": "qwen3.5-2b",
+    "base_url": "http://localhost:8080/v1"
+  },
+  "anthropic-claude-3.5-sonnet": {
+    "provider": "anthropic",
+    "model": "claude-3-5-sonnet-20240620"
+  },
+  "deepseek-coder": {
+    "provider": "deepseek",
+    "model": "deepseek-coder"
+  },
+  "deepseek-chat": {
+    "provider": "deepseek",
+    "model": "deepseek-chat"
+  }
+}
