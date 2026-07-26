@@ -17,6 +17,11 @@
     "model": "qwen3.5-2b",
     "base_url": "http://localhost:8080/v1"
   },
+  "local-qwen3.5-0.8b": {
+    "provider": "local",
+    "model": "qwen3.5-0.8b",
+    "base_url": "http://localhost:8080/v1"
+  },
   "anthropic-claude-3.5-sonnet": {
     "provider": "anthropic",
     "model": "claude-3-5-sonnet-20240620"

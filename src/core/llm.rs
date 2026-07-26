@@ -1,14 +1,14 @@
 use crate::core::config::{Config, Provider};
 use crate::core::memory::{self, Turn};
 use crate::core::tools::{RunPython, RunShell};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use rig::agent::{Agent, MultiTurnStreamItem};
 use rig::client::BearerAuth;
 use rig::completion::message::{ToolResult, ToolResultContent};
 use rig::completion::{CompletionModel, GetTokenUsage, Message, Prompt};
-use rig::prelude::{CompletionClient, ProviderClient};
+use rig::prelude::CompletionClient;
 use rig::providers::{anthropic, deepseek, groq, openai};
 use rig::streaming::{StreamedAssistantContent, StreamedUserContent, StreamingChat};
 use std::sync::Arc;
@@ -121,9 +121,10 @@ where
                             preview: tool_preview(&tool_call.function.arguments),
                         });
                     }
-                    Ok(MultiTurnStreamItem::StreamUserItem(
-                        StreamedUserContent::ToolResult { tool_result, .. },
-                    )) => {
+                    Ok(MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult {
+                        tool_result,
+                        ..
+                    })) => {
                         let _ = tx.send(Token::ToolResult {
                             summary: result_summary(&tool_result),
                         });
@@ -169,26 +170,30 @@ impl Llm {
     pub fn new(config: &Config) -> Result<Self> {
         let ws = &config.workspace_dir;
         let _ = std::fs::create_dir_all(ws);
-        
+
         let inner: Arc<dyn Backend> = match config.provider {
             Provider::Local => {
                 let key = config.api_key.clone().unwrap_or_else(|| "local".into());
                 match openai::CompletionsClient::builder()
                     .api_key(BearerAuth::from(key))
                     .base_url(&config.base_url)
-                    .build() {
-                        Ok(client) => {
-                            let agent = client
-                                .agent(&config.model)
-                                .preamble(&config.system_prompt)
-                                .default_max_turns(8)
-                                .tool(RunPython::new(ws.clone()))
-                                .tool(RunShell::new(ws.clone()))
-                                .build();
-                            Arc::new(AgentBackend(Arc::new(agent)))
-                        }
-                        Err(e) => Arc::new(DummyBackend(format!("no se pudo crear el cliente local: {:?}", e)))
+                    .build()
+                {
+                    Ok(client) => {
+                        let agent = client
+                            .agent(&config.model)
+                            .preamble(&config.system_prompt)
+                            .default_max_turns(8)
+                            .tool(RunPython::new(ws.clone()))
+                            .tool(RunShell::new(ws.clone()))
+                            .build();
+                        Arc::new(AgentBackend(Arc::new(agent)))
                     }
+                    Err(e) => Arc::new(DummyBackend(format!(
+                        "no se pudo crear el cliente local: {:?}",
+                        e
+                    ))),
+                }
             }
             Provider::Groq => {
                 if let Some(key) = &config.api_key {
@@ -203,10 +208,15 @@ impl Llm {
                                 .build();
                             Arc::new(AgentBackend(Arc::new(agent)))
                         }
-                        Err(e) => Arc::new(DummyBackend(format!("no se pudo crear el cliente groq: {:?}", e)))
+                        Err(e) => Arc::new(DummyBackend(format!(
+                            "no se pudo crear el cliente groq: {:?}",
+                            e
+                        ))),
                     }
                 } else {
-                    Arc::new(DummyBackend("API Key es requerida para el provider groq".to_string()))
+                    Arc::new(DummyBackend(
+                        "API Key es requerida para el provider groq".to_string(),
+                    ))
                 }
             }
             Provider::OpenAI => {
@@ -222,10 +232,15 @@ impl Llm {
                                 .build();
                             Arc::new(AgentBackend(Arc::new(agent)))
                         }
-                        Err(e) => Arc::new(DummyBackend(format!("no se pudo crear el cliente openai: {:?}", e)))
+                        Err(e) => Arc::new(DummyBackend(format!(
+                            "no se pudo crear el cliente openai: {:?}",
+                            e
+                        ))),
                     }
                 } else {
-                    Arc::new(DummyBackend("API Key es requerida para el provider openai".to_string()))
+                    Arc::new(DummyBackend(
+                        "API Key es requerida para el provider openai".to_string(),
+                    ))
                 }
             }
             Provider::Anthropic => {
@@ -241,10 +256,15 @@ impl Llm {
                                 .build();
                             Arc::new(AgentBackend(Arc::new(agent)))
                         }
-                        Err(e) => Arc::new(DummyBackend(format!("no se pudo crear el cliente anthropic: {:?}", e)))
+                        Err(e) => Arc::new(DummyBackend(format!(
+                            "no se pudo crear el cliente anthropic: {:?}",
+                            e
+                        ))),
                     }
                 } else {
-                    Arc::new(DummyBackend("API Key es requerida para el provider anthropic".to_string()))
+                    Arc::new(DummyBackend(
+                        "API Key es requerida para el provider anthropic".to_string(),
+                    ))
                 }
             }
             Provider::DeepSeek => {
@@ -260,10 +280,15 @@ impl Llm {
                                 .build();
                             Arc::new(AgentBackend(Arc::new(agent)))
                         }
-                        Err(e) => Arc::new(DummyBackend(format!("no se pudo crear el cliente deepseek: {:?}", e)))
+                        Err(e) => Arc::new(DummyBackend(format!(
+                            "no se pudo crear el cliente deepseek: {:?}",
+                            e
+                        ))),
                     }
                 } else {
-                    Arc::new(DummyBackend("API Key es requerida para el provider deepseek".to_string()))
+                    Arc::new(DummyBackend(
+                        "API Key es requerida para el provider deepseek".to_string(),
+                    ))
                 }
             }
         };
@@ -303,10 +328,16 @@ impl Llm {
     }
 
     pub async fn test_connection(&self) -> Result<()> {
-        self.inner.complete("Responde 'ok' si estás funcionando.".into()).await
+        self.inner
+            .complete("Responde 'ok' si estás funcionando.".into())
+            .await
             .map_err(|e| {
                 let s = e.to_string();
-                let short = if s.len() > 200 { format!("{}...", &s[..200]) } else { s };
+                let short = if s.len() > 200 {
+                    format!("{}...", &s[..200])
+                } else {
+                    s
+                };
                 anyhow::anyhow!("Verifica tu API Key o URL.\nDetalle: {}", short)
             })?;
         Ok(())
